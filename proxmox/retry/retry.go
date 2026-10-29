@@ -57,7 +57,7 @@ func WithRetryIf(fn func(error) bool) Option {
 
 // WithAlreadyDoneCheck sets a predicate that detects when a retry attempt finds
 // evidence that the first attempt already succeeded (e.g. "already exists").
-// Only checked on retry attempts, not the first attempt.
+// On the first attempt a matching error is final and not retried.
 func WithAlreadyDoneCheck(fn func(error) bool) Option {
 	return func(o *Operation) { o.isAlreadyDone = fn }
 }
@@ -128,7 +128,7 @@ func NewTaskOperation(name string, opts ...Option) *Operation {
 // according to the operation's retry configuration. Errors from waitFn are
 // unrecoverable to prevent re-dispatch after a wait failure, unless they match
 // the operation's task retry predicate (lock timeouts for task operations).
-// The isAlreadyDone check (if configured) is only applied on retry attempts.
+// A dispatch error matching isAlreadyDone (if configured) is final on the first attempt and success on a retry.
 func (o *Operation) DoTask(
 	ctx context.Context,
 	dispatchFn func() (*string, error),
@@ -175,7 +175,12 @@ func (o *Operation) DoTask(
 	return retrylib.New(retryOpts...).Do(func() error {
 		taskID, err := dispatchFn()
 		if err != nil {
-			if retrying && o.isAlreadyDone != nil && o.isAlreadyDone(err) {
+			if o.isAlreadyDone != nil && o.isAlreadyDone(err) {
+				// Nothing of ours can exist before the first attempt, so there it is PVE refusing the request.
+				if !retrying {
+					return retrylib.Unrecoverable(err)
+				}
+
 				return nil
 			}
 

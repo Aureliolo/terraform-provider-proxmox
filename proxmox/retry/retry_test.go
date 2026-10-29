@@ -150,16 +150,25 @@ func TestDoTask_AlreadyDoneIgnoredOnFirstAttempt(t *testing.T) {
 		WithAlreadyDoneCheck(ErrorContains("already exists")),
 	)
 
+	dispatched := 0
+
 	err := op.DoTask(t.Context(),
 		func() (*string, error) {
-			return nil, fmt.Errorf("container 100 already exists")
+			dispatched++
+
+			// PVE refuses a taken ID with HTTP 500, which IsTransientAPIError matches.
+			return nil, &api.HTTPError{
+				Code:    http.StatusInternalServerError,
+				Message: "unable to create VM 100 - VM 100 already exists on node 'pve'",
+			}
 		},
 		func(_ context.Context, _ string) error { return nil },
 	)
 
-	// "already exists" on first attempt is a real error, not suppressed
+	// "already exists" on first attempt is a real error, not suppressed and not retried
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "already exists")
+	assert.Equal(t, 1, dispatched)
 }
 
 func TestDoTask_NilTaskIDSkipsWait(t *testing.T) {
